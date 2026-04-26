@@ -1,6 +1,6 @@
 # EduVision MVC
 
-Academic management platform built with ASP.NET Core MVC, Entity Framework Core, role-based access control, analytics dashboards, and live deployment on Azure.
+Academic management platform built with ASP.NET Core MVC, Entity Framework Core, role-based access control, analytics dashboards, and Azure deployment workflows.
 
 ## Project Summary
 
@@ -13,7 +13,7 @@ EduVision is a full-stack education platform built to model how a real academic 
 - role-based authentication and authorization
 - dashboard and analytics endpoints
 - production-aware deployment and migration handling
-- live hosting on Azure App Service
+- Azure App Service deployment workflow
 
 ## Main Capabilities
 
@@ -30,9 +30,11 @@ EduVision is a full-stack education platform built to model how a real academic 
 - chart endpoints and dashboard diagnostics are exposed directly in the application
 - the project demonstrates backend delivery beyond standard CRUD scaffolding
 
-## Live Demo
+## Deployment History
 
-[eduvisionmvc.azurewebsites.net](https://eduvisionmvc.azurewebsites.net/)
+This project was previously deployed to Azure App Service and used as a production-style hosting target while I was validating the application end to end.
+
+The public Azure instance may not always be online because it depended on student and free cloud credits, but the repository still includes the deployment workflow and production-oriented configuration needed to redeploy it.
 
 ## Why This Project Matters
 

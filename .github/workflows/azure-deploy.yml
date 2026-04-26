@@ -1,14 +1,20 @@
-name: Deploy to Azure App Service (Publish Profile)
+name: Build and optional Azure deploy
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      deploy_to_azure:
+        description: 'Run the Azure App Service deployment steps'
+        required: true
+        default: false
+        type: boolean
 
 env:
   DOTNET_VERSION: '9.0.x'
-  AZURE_WEBAPP_NAME: 'eduvision-app'  # Replace with your Azure App Service name
+  AZURE_WEBAPP_NAME: 'eduvision-app'
 
 jobs:
   build-and-deploy:
@@ -39,13 +45,21 @@ jobs:
         if (-not (Test-Path $webConfigPath)) { Write-Error "web.config not found in publish output"; exit 1 }
         [xml]$webConfig = Get-Content $webConfigPath
         $envVars = $webConfig.SelectSingleNode("//environmentVariables")
-        if ($null -eq $envVars) { $aspNetCore = $webConfig.SelectSingleNode("//aspNetCore"); $envVars = $webConfig.CreateElement("environmentVariables"); $aspNetCore.AppendChild($envVars) | Out-Null }
+        if ($null -eq $envVars) {
+          $aspNetCore = $webConfig.SelectSingleNode("//aspNetCore")
+          $envVars = $webConfig.CreateElement("environmentVariables")
+          $aspNetCore.AppendChild($envVars) | Out-Null
+        }
         $envVar = $webConfig.SelectSingleNode("//environmentVariable[@name='ASPNETCORE_ENVIRONMENT']")
-        if ($null -eq $envVar) { $envVar = $webConfig.CreateElement("environmentVariable"); $envVar.SetAttribute("name","ASPNETCORE_ENVIRONMENT"); $envVars.AppendChild($envVar) | Out-Null }
-        $envVar.SetAttribute("value","Production")
+        if ($null -eq $envVar) {
+          $envVar = $webConfig.CreateElement("environmentVariable")
+          $envVar.SetAttribute("name", "ASPNETCORE_ENVIRONMENT")
+          $envVars.AppendChild($envVar) | Out-Null
+        }
+        $envVar.SetAttribute("value", "Production")
         $aspNetCore = $webConfig.SelectSingleNode("//aspNetCore")
-        $aspNetCore.SetAttribute("stdoutLogEnabled","true")
-        $aspNetCore.SetAttribute("stdoutLogFile",".\\logs\\stdout")
+        $aspNetCore.SetAttribute("stdoutLogEnabled", "true")
+        $aspNetCore.SetAttribute("stdoutLogFile", ".\\logs\\stdout")
         $webConfig.Save($webConfigPath)
         Write-Host "web.config updated for Production"
 
@@ -56,51 +70,59 @@ jobs:
         Compress-Archive -Path "publish/*" -DestinationPath publish.zip -Force
         Write-Host "Created publish.zip"
 
+    - name: Deployment mode summary
+      shell: pwsh
+      run: |
+        if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ inputs.deploy_to_azure }}" -eq "true") {
+          Write-Host "Azure deployment is enabled for this manual run."
+        } else {
+          Write-Host "CI build completed. Azure deployment steps were skipped for this run."
+        }
+
     - name: Deploy to Azure Web App (Publish Profile)
+      if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_to_azure }}
       uses: azure/webapps-deploy@v2
       with:
         publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
         package: ./publish.zip
-    
-    - name: Set Production environment variable via Azure CLI
+
+    - name: Set Production environment variable via Azure Kudu API
+      if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_to_azure }}
       shell: pwsh
       run: |
-        # Extract app name and credentials from publish profile
         [xml]$profile = [xml]'${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}'
         $publishData = $profile.publishData.publishProfile | Where-Object { $_.publishMethod -eq 'MSDeploy' } | Select-Object -First 1
         $appName = $publishData.msdeploySite
         $username = $publishData.userName
         $password = $publishData.userPWD
-        
-        # Use Kudu API to set app setting
+
         $base64Auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("${username}:${password}"))
         $apiUrl = "https://${appName}.scm.azurewebsites.net/api/settings"
-        
         $settings = @{
           ASPNETCORE_ENVIRONMENT = "Production"
         }
-        
+
         try {
           Invoke-RestMethod -Uri $apiUrl -Method Post -Body ($settings | ConvertTo-Json) -Headers @{
             Authorization = "Basic $base64Auth"
             "Content-Type" = "application/json"
           }
-          Write-Host "✅ Set ASPNETCORE_ENVIRONMENT to Production via Kudu API"
+          Write-Host "Set ASPNETCORE_ENVIRONMENT to Production via Kudu API"
         } catch {
           Write-Warning "Could not set environment variable via API (app may need manual configuration): $_"
         }
 
     - name: Deployment summary
+      if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_to_azure }}
+      shell: pwsh
       run: |
-        echo "✅ Deployment completed (Publish Profile)"
-        echo "🔗 App URL: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
-        echo ""
-        echo "⚠️ CRITICAL: Verify Azure App Service Configuration:"
-        echo "1. Go to Azure Portal → App Service → Configuration → Application settings"
-        echo "   - ASPNETCORE_ENVIRONMENT should be 'Production' (not Development)"
-        echo "2. Go to Configuration → Connection strings"
-        echo "   - DefaultConnection (Type: SQLAzure) should be your SQL Server connection string"
-        echo "   - Example: Server=tcp:yourserver.database.windows.net,1433;Initial Catalog=yourdb;User ID=youradmin;Password=yourpass;Encrypt=True;TrustServerCertificate=False;"
-        echo ""
-        echo "3. After verifying/updating settings, restart the App Service"
-        echo "4. Check Log Stream for migration errors"
+        Write-Host "Deployment completed (Publish Profile)"
+        Write-Host "App URL: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+        Write-Host ""
+        Write-Host "Verify Azure App Service configuration:"
+        Write-Host "1. Go to Azure Portal -> App Service -> Configuration -> Application settings"
+        Write-Host "   - ASPNETCORE_ENVIRONMENT should be 'Production' (not Development)"
+        Write-Host "2. Go to Configuration -> Connection strings"
+        Write-Host "   - DefaultConnection (Type: SQLAzure) should be your SQL Server connection string"
+        Write-Host "3. After verifying or updating settings, restart the App Service"
+        Write-Host "4. Check Log Stream for migration errors"
